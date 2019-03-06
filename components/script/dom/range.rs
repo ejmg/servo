@@ -10,6 +10,7 @@ use crate::dom::bindings::codegen::Bindings::RangeBinding::RangeMethods;
 use crate::dom::bindings::codegen::Bindings::RangeBinding::{self, RangeConstants};
 use crate::dom::bindings::codegen::Bindings::TextBinding::TextMethods;
 use crate::dom::bindings::codegen::Bindings::WindowBinding::WindowMethods;
+use crate::dom::bindings::codegen::InheritTypes::DocumentFragmentTypeId;
 use crate::dom::bindings::error::{Error, ErrorResult, Fallible};
 use crate::dom::bindings::inheritance::Castable;
 use crate::dom::bindings::inheritance::{CharacterDataTypeId, NodeTypeId};
@@ -23,7 +24,7 @@ use crate::dom::document::Document;
 use crate::dom::documentfragment::DocumentFragment;
 use crate::dom::element::Element;
 use crate::dom::htmlscriptelement::HTMLScriptElement;
-use crate::dom::node::{Node, UnbindContext};
+use crate::dom::node::{Node, ShadowIncluding, UnbindContext};
 use crate::dom::text::Text;
 use crate::dom::window::Window;
 use dom_struct::dom_struct;
@@ -499,7 +500,7 @@ impl RangeMethods for Range {
                 fragment.upcast::<Node>().AppendChild(&clone)?;
             } else {
                 // Step 14.1.
-                let clone = child.CloneNode(false);
+                let clone = child.CloneNode(/* deep */ false)?;
                 // Step 14.2.
                 fragment.upcast::<Node>().AppendChild(&clone)?;
                 // Step 14.3.
@@ -520,7 +521,7 @@ impl RangeMethods for Range {
         // Step 15.
         for child in contained_children {
             // Step 15.1.
-            let clone = child.CloneNode(true);
+            let clone = child.CloneNode(/* deep */ true)?;
             // Step 15.2.
             fragment.upcast::<Node>().AppendChild(&clone)?;
         }
@@ -536,7 +537,7 @@ impl RangeMethods for Range {
                 fragment.upcast::<Node>().AppendChild(&clone)?;
             } else {
                 // Step 17.1.
-                let clone = child.CloneNode(false);
+                let clone = child.CloneNode(/* deep */ false)?;
                 // Step 17.2.
                 fragment.upcast::<Node>().AppendChild(&clone)?;
                 // Step 17.3.
@@ -572,7 +573,7 @@ impl RangeMethods for Range {
         if end_node == start_node {
             if let Some(end_data) = end_node.downcast::<CharacterData>() {
                 // Step 4.1.
-                let clone = end_node.CloneNode(true);
+                let clone = end_node.CloneNode(/* deep */ true)?;
                 // Step 4.2.
                 let text = end_data.SubstringData(start_offset, end_offset - start_offset);
                 clone
@@ -613,7 +614,7 @@ impl RangeMethods for Range {
             if let Some(start_data) = child.downcast::<CharacterData>() {
                 assert!(child == start_node);
                 // Step 15.1.
-                let clone = start_node.CloneNode(true);
+                let clone = start_node.CloneNode(/* deep */ true)?;
                 // Step 15.2.
                 let text = start_data.SubstringData(start_offset, start_node.len() - start_offset);
                 clone
@@ -630,7 +631,7 @@ impl RangeMethods for Range {
                 )?;
             } else {
                 // Step 16.1.
-                let clone = child.CloneNode(false);
+                let clone = child.CloneNode(/* deep */ false)?;
                 // Step 16.2.
                 fragment.upcast::<Node>().AppendChild(&clone)?;
                 // Step 16.3.
@@ -657,7 +658,7 @@ impl RangeMethods for Range {
             if let Some(end_data) = child.downcast::<CharacterData>() {
                 assert!(child == end_node);
                 // Step 18.1.
-                let clone = end_node.CloneNode(true);
+                let clone = end_node.CloneNode(/* deep */ true)?;
                 // Step 18.2.
                 let text = end_data.SubstringData(0, end_offset);
                 clone
@@ -670,7 +671,7 @@ impl RangeMethods for Range {
                 end_data.ReplaceData(0, end_offset, DOMString::new())?;
             } else {
                 // Step 19.1.
-                let clone = child.CloneNode(false);
+                let clone = child.CloneNode(/* deep */ false)?;
                 // Step 19.2.
                 fragment.upcast::<Node>().AppendChild(&clone)?;
                 // Step 19.3.
@@ -759,7 +760,11 @@ impl RangeMethods for Range {
 
         // Step 11
         let new_offset = new_offset +
-            if node.type_id() == NodeTypeId::DocumentFragment {
+            if node.type_id() ==
+                NodeTypeId::DocumentFragment(DocumentFragmentTypeId::DocumentFragment) ||
+                node.type_id() ==
+                    NodeTypeId::DocumentFragment(DocumentFragmentTypeId::ShadowRoot)
+            {
                 node.len()
             } else {
                 1
@@ -874,7 +879,9 @@ impl RangeMethods for Range {
 
         // Step 2.
         match new_parent.type_id() {
-            NodeTypeId::Document(_) | NodeTypeId::DocumentType | NodeTypeId::DocumentFragment => {
+            NodeTypeId::Document(_) |
+            NodeTypeId::DocumentType |
+            NodeTypeId::DocumentFragment(_) => {
                 return Err(Error::InvalidNodeType);
             },
             _ => (),
@@ -950,7 +957,7 @@ impl RangeMethods for Range {
         let node = self.StartContainer();
         let owner_doc = node.owner_doc();
         let element = match node.type_id() {
-            NodeTypeId::Document(_) | NodeTypeId::DocumentFragment => None,
+            NodeTypeId::Document(_) | NodeTypeId::DocumentFragment(_) => None,
             NodeTypeId::Element(_) => Some(DomRoot::downcast::<Element>(node).unwrap()),
             NodeTypeId::CharacterData(CharacterDataTypeId::Comment) |
             NodeTypeId::CharacterData(CharacterDataTypeId::Text) => node.GetParentElement(),
@@ -965,7 +972,10 @@ impl RangeMethods for Range {
         let fragment_node = element.parse_fragment(fragment)?;
 
         // Step 4.
-        for node in fragment_node.upcast::<Node>().traverse_preorder() {
+        for node in fragment_node
+            .upcast::<Node>()
+            .traverse_preorder(ShadowIncluding::No)
+        {
             if let Some(script) = node.downcast::<HTMLScriptElement>() {
                 script.set_already_started(false);
                 script.set_parser_inserted(false);
